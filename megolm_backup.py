@@ -23,6 +23,7 @@ import getpass
 import hashlib
 import argparse
 
+from Crypto.Util import Counter
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 
@@ -46,6 +47,7 @@ from Crypto.Random import get_random_bytes
 HEADER = b"-----BEGIN MEGOLM SESSION DATA-----"
 FOOTER = b"-----END MEGOLM SESSION DATA-----"
 
+# XXX: It kinda sucks you can't have 16-byte bigints with Python's struct...
 CryptoParams = struct.Struct(">c16s16sL")
 MAC_SIZE = 32
 
@@ -74,20 +76,19 @@ def enc_session_data(passphrase, json_data):
 
 	# Clear bit 63 of IV -- apparently this is required to work around a quirk
 	# of the Android AES-CTR's counter implementation.
-	IV = bytearray(IV)
-	IV[9] &= 0x7f
+	IV = int.from_bytes(IV, byteorder="big") & ~(1 << 63)
 
 	# Get our keys.
 	K, Kp = stretch_keys(passphrase, S, N)
 
 	# Encrypt the JSON.
-	# NOTE: The empty nonce is intentional -- all the bits are a counter.
-	cipher = AES.new(K, AES.MODE_CTR, nonce=b"", initial_value=IV)
+	ctr = Counter.new(128, initial_value=IV)
+	cipher = AES.new(K, AES.MODE_CTR, counter=ctr)
 	plaintext = json_data
 	ciphertext = cipher.encrypt(plaintext)
 
 	# Prepend the crypto parameters.
-	params = CryptoParams.pack(version, S, IV, N)
+	params = CryptoParams.pack(version, S, IV.to_bytes(16, "big"), N)
 	body = params + ciphertext
 
 	# Compute the MAC.
@@ -102,20 +103,21 @@ def dec_session_data(passphrase, session_data):
 	session_data = session_data.strip()
 
 	# Does it have the header and footer?
-	if session_data[:len(HEADER)] != HEADER:
+	if not session_data.startswith(HEADER):
 		bail("session data invalid: missing header %r" % (HEADER,))
-	if session_data[-len(FOOTER):] != FOOTER:
+	if not session_data.endswith(FOOTER):
 		bail("session data invalid: missing footer %r" % (FOOTER,))
 
 	# Get the body and base64-decode it.
 	body = base64.b64decode(session_data[len(HEADER):-len(FOOTER)])
 
 	if len(body) < CryptoParams.size + MAC_SIZE:
-		bail("session data too small: %d < %d", len(body), CryptoParams.size + MAC_SIZE)
+		bail("session data invalid: data packet too small")
 
 	# Get the parameters (we need S and N to check the MAC).
 	params = body[:CryptoParams.size]
 	version, S, IV, N = CryptoParams.unpack(params)
+	IV = int.from_bytes(IV, byteorder="big")
 
 	# Figure out the keys.
 	K, Kp = stretch_keys(passphrase, S, N)
@@ -127,8 +129,8 @@ def dec_session_data(passphrase, session_data):
 		bail("session data corrupted or bad passphrase: mac check failed")
 
 	# Okay, decrypt the JSON.
-	# NOTE: The empty nonce is intentional -- all the bits are a counter.
-	cipher = AES.new(K, AES.MODE_CTR, nonce=b"", initial_value=IV)
+	ctr = Counter.new(128, initial_value=IV)
+	cipher = AES.new(K, AES.MODE_CTR, counter=ctr)
 	ciphertext = body[CryptoParams.size:-MAC_SIZE]
 	return cipher.decrypt(ciphertext)
 
