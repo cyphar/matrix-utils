@@ -15,17 +15,20 @@ I've tested the output and input format with my own room keys and it has worked
 so far.
 
 ```
-usage: megolm_backup.py [-h] (--into | --from) [file]
+usage: megolm_backup.py [-h] [-o OUTPUT] (--into | --from) [file]
 
 Operate on megolm session backups.
 
 positional arguments:
-  file        Backup text file (- for stdin).
+  file                  Input text file (- for stdin).
 
 optional arguments:
-  -h, --help  show this help message and exit
-  --into      Encrypt and represent file as a megolm session backup.
-  --from      Decrypt the given megolm session and output the contents.
+  -h, --help            show this help message and exit
+  -o OUTPUT, --output OUTPUT
+                        Output text file (- for stdout).
+  --into                Encrypt and represent file as a megolm session backup.
+  --from                Decrypt the given megolm session and output the
+                        contents.
 ```
 
 Using the above example, let's say we want to only get session keys of the room

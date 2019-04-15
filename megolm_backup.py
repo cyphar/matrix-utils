@@ -72,7 +72,8 @@ def enc_session_data(passphrase, json_data):
 	# Figure out our parameters.
 	version, S, IV, N = b"\x01", get_random_bytes(16), get_random_bytes(16), 500000
 
-	# Clear bit 63 of IV.
+	# Clear bit 63 of IV -- apparently this is required to work around a quirk
+	# of the Android AES-CTR's counter implementation.
 	IV = bytearray(IV)
 	IV[9] &= 0x7f
 
@@ -80,6 +81,7 @@ def enc_session_data(passphrase, json_data):
 	K, Kp = stretch_keys(passphrase, S, N)
 
 	# Encrypt the JSON.
+	# NOTE: The empty nonce is intentional -- all the bits are a counter.
 	cipher = AES.new(K, AES.MODE_CTR, nonce=b"", initial_value=IV)
 	plaintext = json_data
 	ciphertext = cipher.encrypt(plaintext)
@@ -125,13 +127,15 @@ def dec_session_data(passphrase, session_data):
 		bail("session data corrupted or bad passphrase: mac check failed")
 
 	# Okay, decrypt the JSON.
+	# NOTE: The empty nonce is intentional -- all the bits are a counter.
 	cipher = AES.new(K, AES.MODE_CTR, nonce=b"", initial_value=IV)
 	ciphertext = body[CryptoParams.size:-MAC_SIZE]
 	return cipher.decrypt(ciphertext)
 
 def main(args):
 	parser = argparse.ArgumentParser(description="Operate on megolm session backups.")
-	parser.add_argument("file", nargs="?", default="-", help="Backup text file (- for stdin).")
+	parser.add_argument("file", nargs="?", default="-", help="Input text file (- for stdin).")
+	parser.add_argument("-o", "--output", default="-", required=False, help="Output text file (- for stdout).")
 	mode_group = parser.add_mutually_exclusive_group(required=True)
 	mode_group.add_argument("--into", dest="mode", const="encrypt", action="store_const", help="Encrypt and represent file as a megolm session backup.")
 	mode_group.add_argument("--from", dest="mode", const="decrypt", action="store_const", help="Decrypt the given megolm session and output the contents.")
@@ -139,6 +143,8 @@ def main(args):
 
 	if args.file == "-":
 		args.file = "/dev/stdin"
+	if args.output == "-":
+		args.output = "/dev/stdout"
 
 	action = {
 		"encrypt": enc_session_data,
@@ -148,12 +154,15 @@ def main(args):
 	with open(args.file, "rb") as f:
 		data = f.read()
 
-	# Wait until after reading input to get the passphrase so pipelines work.
+	# Wait until after reading input to get the passphrase so pipelines work
+	# properly. This results in slightly strange behaviour for interactive
+	# uses, but most people will be using this in a pipeline.
 	passphrase = getpass.getpass("Backup passphrase [mode=%s]: " % (args.mode,))
 	output = action(passphrase, data)
 
-	sys.stdout.buffer.write(output + b"\n")
-	sys.stdout.buffer.flush()
+	with open(args.output, "wb") as f:
+		f.write(output + b"\n")
+		f.flush()
 
 if __name__ == "__main__":
 	main(sys.argv[1:])
