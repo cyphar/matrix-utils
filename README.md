@@ -40,7 +40,7 @@ Using the above example, let's say we want to only get session keys of the room
 	megolm_backup.py --into > new-riot-keys.txt
 ```
 
-You need to have PyCrypto installed in order for this script to work.
+You need to have PyCryptodome installed in order for this script to work.
 
 [riotweb-issue6454]: https://github.com/vector-im/riot-web/issues/6454
 [jq]: https://stedolan.github.io/jq/
